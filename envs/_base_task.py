@@ -82,6 +82,7 @@ class Base_Task(gym.Env):
         self.crazy_random_light_rate = random_setting.get("crazy_random_light_rate", 0)
         self.crazy_random_light = (0 if not self.random_light else np.random.rand() < self.crazy_random_light_rate)
         self.random_embodiment = random_setting.get("random_embodiment", False)  # TODO
+        self.camera_perturbation = kwags.get("camera_perturbation", {})
 
         self.file_path = []
         self.plan_success = True
@@ -211,10 +212,12 @@ class Base_Task(gym.Env):
         # give renderer to sapien sim
         self.engine.set_renderer(self.renderer)
 
-        sapien.render.set_camera_shader_dir("rt")
-        sapien.render.set_ray_tracing_samples_per_pixel(32)
-        sapien.render.set_ray_tracing_path_depth(8)
-        sapien.render.set_ray_tracing_denoiser("oidn")
+        camera_shader_dir = kwargs.get("camera_shader_dir", os.environ.get("ROBOTWIN_CAMERA_SHADER_DIR", "rt"))
+        sapien.render.set_camera_shader_dir(camera_shader_dir)
+        if camera_shader_dir == "rt":
+            sapien.render.set_ray_tracing_samples_per_pixel(32)
+            sapien.render.set_ray_tracing_path_depth(8)
+            sapien.render.set_ray_tracing_denoiser("oidn")
 
         # declare sapien scene
         scene_config = sapien.SceneConfig()
@@ -404,11 +407,14 @@ class Base_Task(gym.Env):
         Add cameras and set camera parameters
             - Including four cameras: left, right, front, head.
         """
+        camera_kwags = dict(kwags)
+        camera_kwags["camera_perturbation"] = self.camera_perturbation
+        camera_kwags["camera_anchor"] = np.array(self.table.get_pose().p).tolist()
 
         self.cameras = Camera(
             bias=self.table_z_bias,
             random_head_camera_dis=self.random_head_camera_dis,
-            **kwags,
+            **camera_kwags,
         )
         self.cameras.load_camera(self.scene)
         self.scene.step()  # run a physical step

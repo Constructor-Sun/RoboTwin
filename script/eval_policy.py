@@ -61,6 +61,25 @@ def get_embodiment_config(robot_file):
     return embodiment_args
 
 
+def print_camera_perturbation_config(args):
+    camera_perturbation = args.get("camera_perturbation", {})
+    enabled = camera_perturbation.get("enabled", False)
+    print("\033[96mCamera Perturbation:\033[0m " + str(enabled))
+    if not enabled:
+        return
+
+    print(" - C1 Distance: " + str(camera_perturbation.get("c1_distance", False)))
+    print(" - C1 Scale Range: " + str(camera_perturbation.get("c1_distance_scale_range", [0.85, 1.0])))
+    print(" - C2 Spherical: " + str(camera_perturbation.get("c2_spherical", False)))
+    print(" - C3 Orientation: " + str(camera_perturbation.get("c3_orientation", False)))
+    print(" - C3 Yaw/Pitch/Roll Deg: " + str([
+        camera_perturbation.get("c3_yaw_deg", 5),
+        camera_perturbation.get("c3_pitch_deg", 5),
+        camera_perturbation.get("c3_roll_deg", 5),
+    ]))
+    print(" - Anchor Mode: " + str(camera_perturbation.get("anchor_mode", "table_center")))
+
+
 def main(usr_args):
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     task_name = usr_args["task_name"]
@@ -142,6 +161,7 @@ def main(usr_args):
         print(" - Crazy Random Light Rate: " + str(args["domain_randomization"]["crazy_random_light_rate"]))
     print("\033[95mRandom Table Height:\033[0m " + str(args["domain_randomization"]["random_table_height"]))
     print("\033[95mRandom Head Camera Distance:\033[0m " + str(args["domain_randomization"]["random_head_camera_dis"]))
+    print_camera_perturbation_config(args)
 
     print("\033[94mHead Camera Config:\033[0m " + str(args["camera"]["head_camera_type"]) + f", " +
           str(args["camera"]["collect_head_camera"]))

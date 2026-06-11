@@ -50,6 +50,10 @@ class Camera:
         self.pcd_crop_bbox[0][2] += bias
         self.table_z_bias = bias
         self.random_head_camera_dis = random_head_camera_dis
+        self.camera_perturbation = kwags.get("camera_perturbation", {})
+        self.camera_anchor = np.array(kwags["camera_anchor"], dtype=np.float64) if self.camera_perturbation else None
+        if self.camera_perturbation and self.camera_perturbation["enabled"] and self.camera_perturbation["c2_spherical"]:
+            raise NotImplementedError("camera_perturbation.c2_spherical is configured but not implemented yet")
 
         self.static_camera_config = []
         self.head_camera_type = kwags["camera"].get("head_camera_type", "D435")
@@ -73,6 +77,98 @@ class Camera:
         self.static_camera_info_list = kwags["left_embodiment_config"]["static_camera_list"]
         self.static_camera_num = len(self.static_camera_info_list)
 
+    def _orthonormalize_camera_frame(self, forward, left, up=None):
+        forward = np.array(forward, dtype=np.float64)
+        forward_norm = np.linalg.norm(forward)
+        if forward_norm <= 1e-8:
+            forward = np.array([1, 0, 0], dtype=np.float64)
+        else:
+            forward = forward / forward_norm
+
+        left = np.array(left, dtype=np.float64)
+        left = left - np.dot(left, forward) * forward
+
+        if np.linalg.norm(left) <= 1e-8 and up is not None:
+            left = np.cross(up, forward)
+        if np.linalg.norm(left) <= 1e-8:
+            left = np.cross([0, 0, 1], forward)
+        if np.linalg.norm(left) <= 1e-8:
+            left = np.cross([0, 1, 0], forward)
+
+        left = left / np.linalg.norm(left)
+        up = np.cross(forward, left)
+        up = up / np.linalg.norm(up)
+        return forward, left, up
+
+    def _build_base_camera_frame(self, camera_info):
+        cam_pos = np.array(camera_info["position"], dtype=np.float64)
+        cam_forward = np.array(camera_info["forward"], dtype=np.float64)
+        cam_left = np.array(camera_info["left"], dtype=np.float64)
+        cam_forward, cam_left, up = self._orthonormalize_camera_frame(cam_forward, cam_left)
+        return cam_pos, cam_forward, cam_left, up
+
+    def _apply_camera_c1(self, cam_pos, anchor):
+        scale_range = self.camera_perturbation["c1_distance_scale_range"]
+        scale = np.random.uniform(low=scale_range[0], high=scale_range[1])
+        return anchor + scale * (cam_pos - anchor)
+
+    def _look_at_anchor(self, cam_pos, anchor, reference_forward, reference_left, reference_up):
+        forward = anchor - cam_pos
+        forward_norm = np.linalg.norm(forward)
+        if forward_norm <= 1e-8:
+            forward = reference_forward
+        else:
+            forward = forward / forward_norm
+
+        left = np.cross(reference_up, forward)
+        if np.linalg.norm(left) <= 1e-8:
+            left = reference_left
+        return self._orthonormalize_camera_frame(forward, left, up=reference_up)
+
+    def _sample_symmetric_angle(self, max_deg):
+        max_deg = abs(float(max_deg))
+        return np.deg2rad(np.random.uniform(low=-max_deg, high=max_deg))
+
+    def _apply_camera_c3(self, forward, left, up):
+        yaw = self._sample_symmetric_angle(self.camera_perturbation["c3_yaw_deg"])
+        pitch = self._sample_symmetric_angle(self.camera_perturbation["c3_pitch_deg"])
+        roll = self._sample_symmetric_angle(self.camera_perturbation["c3_roll_deg"])
+
+        roll_mat = t3d.axangles.axangle2mat([1, 0, 0], roll)
+        pitch_mat = t3d.axangles.axangle2mat([0, 1, 0], pitch)
+        yaw_mat = t3d.axangles.axangle2mat([0, 0, 1], yaw)
+        local_delta = yaw_mat @ pitch_mat @ roll_mat
+
+        rotation = np.stack([forward, left, up], axis=1) @ local_delta
+        return self._orthonormalize_camera_frame(rotation[:, 0], rotation[:, 1], up=rotation[:, 2])
+
+    def _compose_camera_pose(self, cam_pos, forward, left, up):
+        mat44 = np.eye(4)
+        mat44[:3, :3] = np.stack([forward, left, up], axis=1)
+        mat44[:3, 3] = cam_pos
+        return mat44
+
+    def _should_apply_camera_perturbation(self, camera_info):
+        return (
+            camera_info["name"] == "head_camera"
+            and bool(self.camera_perturbation)
+            and self.camera_perturbation["enabled"]
+        )
+
+    def _build_perturbed_head_camera_pose(self, camera_info):
+        cam_pos, cam_forward, cam_left, up = self._build_base_camera_frame(camera_info)
+        anchor = self.camera_anchor
+
+        if self.camera_perturbation["c1_distance"]:
+            cam_pos = self._apply_camera_c1(cam_pos, anchor)
+            cam_forward, cam_left, up = self._look_at_anchor(cam_pos, anchor, cam_forward, cam_left, up)
+
+        if self.camera_perturbation["c3_orientation"]:
+            cam_forward, cam_left, up = self._apply_camera_c3(cam_forward, cam_left, up)
+
+        cam_forward, cam_left, up = self._orthonormalize_camera_frame(cam_forward, cam_left, up=up)
+        return self._compose_camera_pose(cam_pos, cam_forward, cam_left, up)
+
     def load_camera(self, scene):
         """
         Add cameras and set camera parameters
@@ -94,16 +190,19 @@ class Camera:
                 raise ValueError(f"Camera type {camera_info['type']} not supported")
 
             camera_config = camera_args[camera_info["type"]]
-            cam_pos = np.array(camera_info["position"])
-            vector = np.random.randn(3)
-            random_dir = vector / np.linalg.norm(vector)
-            cam_pos = cam_pos + random_dir * np.random.uniform(low=0, high=random_head_camera_dis)
-            cam_forward = np.array(camera_info["forward"]) / np.linalg.norm(np.array(camera_info["forward"]))
-            cam_left = np.array(camera_info["left"]) / np.linalg.norm(np.array(camera_info["left"]))
-            up = np.cross(cam_forward, cam_left)
-            mat44 = np.eye(4)
-            mat44[:3, :3] = np.stack([cam_forward, cam_left, up], axis=1)
-            mat44[:3, 3] = cam_pos
+            if self._should_apply_camera_perturbation(camera_info):
+                mat44 = self._build_perturbed_head_camera_pose(camera_info)
+            else:
+                cam_pos = np.array(camera_info["position"])
+                vector = np.random.randn(3)
+                random_dir = vector / np.linalg.norm(vector)
+                cam_pos = cam_pos + random_dir * np.random.uniform(low=0, high=random_head_camera_dis)
+                cam_forward = np.array(camera_info["forward"]) / np.linalg.norm(np.array(camera_info["forward"]))
+                cam_left = np.array(camera_info["left"]) / np.linalg.norm(np.array(camera_info["left"]))
+                up = np.cross(cam_forward, cam_left)
+                mat44 = np.eye(4)
+                mat44[:3, :3] = np.stack([cam_forward, cam_left, up], axis=1)
+                mat44[:3, 3] = cam_pos
 
             # ========================= sensor camera =========================
             # sensor_config = StereoDepthSensorConfig()
@@ -382,10 +481,19 @@ class Camera:
             colormap = sorted(set(ImageColor.colormap.values()))
             color_palette = np.array([ImageColor.getrgb(color) for color in colormap], dtype=np.uint8)
             if level == "mesh":
-                label0_image = seg_labels[..., 0].astype(np.uint8)  # mesh-level
+                label_image = seg_labels[..., 0].astype(np.int32)  # mesh-level
             elif level == "actor":
-                label0_image = seg_labels[..., 1].astype(np.uint8)  # actor-level
-            return color_palette[label0_image]
+                label_image = seg_labels[..., 1].astype(np.int32)  # actor-level
+            else:
+                raise ValueError(f"Unsupported segmentation level: {level}")
+
+            # Keep the original integer ids so downstream code can recover
+            # exact actor / mesh masks instead of relying on a colorized view.
+            colorized = color_palette[(label_image % len(color_palette)).astype(np.int32)]
+            return {
+                f"{level}_segmentation": colorized,
+                f"{level}_segmentation_labels": label_image,
+            }
 
         res = {
             # 'left_camera':{},
@@ -395,17 +503,17 @@ class Camera:
         if self.collect_wrist_camera:
             res["left_camera"] = {}
             res["right_camera"] = {}
-            res["left_camera"][f"{level}_segmentation"] = _get_segmentation(self.left_camera, level=level)
-            res["right_camera"][f"{level}_segmentation"] = _get_segmentation(self.right_camera, level=level)
+            res["left_camera"].update(_get_segmentation(self.left_camera, level=level))
+            res["right_camera"].update(_get_segmentation(self.right_camera, level=level))
 
         for camera, camera_name in zip(self.static_camera_list, self.static_camera_name):
             if camera_name == "head_camera":
                 if self.collect_head_camera:
                     res[camera_name] = {}
-                    res[camera_name][f"{level}_segmentation"] = _get_segmentation(camera, level=level)
+                    res[camera_name].update(_get_segmentation(camera, level=level))
             else:
                 res[camera_name] = {}
-                res[camera_name][f"{level}_segmentation"] = _get_segmentation(camera, level=level)
+                res[camera_name].update(_get_segmentation(camera, level=level))
         return res
 
     # Get Camera Depth

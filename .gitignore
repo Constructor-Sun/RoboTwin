@@ -1,4 +1,8 @@
+assets/
+camera_preview/
+results/
 models/
+perturbed_preview/
 data/*
 !data/process_stuck.py
 __pycache__/
@@ -8,7 +12,6 @@ envs/curobo
 *.zip
 viewer_show.*
 eval_video/
-task_config/
 **/.DS_Store
 
 # eval result
