@@ -51,6 +51,10 @@ class Camera:
         self.table_z_bias = bias
         self.random_head_camera_dis = random_head_camera_dis
         self.camera_perturbation = kwags.get("camera_perturbation", {})
+        # Local RNG injected by the env (see _base_task.py SeedSequence pool).
+        # Fallback to the np.random module so this class still works when
+        # instantiated outside the env (legacy callers, scripts, tests).
+        self.camera_rng = kwags.get("camera_rng", np.random)
         self.camera_anchor = np.array(kwags["camera_anchor"], dtype=np.float64) if self.camera_perturbation else None
         if self.camera_perturbation and self.camera_perturbation["enabled"] and self.camera_perturbation["c2_spherical"]:
             raise NotImplementedError("camera_perturbation.c2_spherical is configured but not implemented yet")
@@ -109,7 +113,7 @@ class Camera:
 
     def _apply_camera_c1(self, cam_pos, anchor):
         scale_range = self.camera_perturbation["c1_distance_scale_range"]
-        scale = np.random.uniform(low=scale_range[0], high=scale_range[1])
+        scale = self.camera_rng.uniform(low=scale_range[0], high=scale_range[1])
         return anchor + scale * (cam_pos - anchor)
 
     def _look_at_anchor(self, cam_pos, anchor, reference_forward, reference_left, reference_up):
@@ -127,7 +131,7 @@ class Camera:
 
     def _sample_symmetric_angle(self, max_deg):
         max_deg = abs(float(max_deg))
-        return np.deg2rad(np.random.uniform(low=-max_deg, high=max_deg))
+        return np.deg2rad(self.camera_rng.uniform(low=-max_deg, high=max_deg))
 
     def _apply_camera_c3(self, forward, left, up):
         yaw = self._sample_symmetric_angle(self.camera_perturbation["c3_yaw_deg"])
@@ -194,9 +198,11 @@ class Camera:
                 mat44 = self._build_perturbed_head_camera_pose(camera_info)
             else:
                 cam_pos = np.array(camera_info["position"])
-                vector = np.random.randn(3)
+                # Use standard_normal so the call works for both np.random.Generator
+                # (no .randn attribute) and the legacy np.random module fallback.
+                vector = self.camera_rng.standard_normal(3)
                 random_dir = vector / np.linalg.norm(vector)
-                cam_pos = cam_pos + random_dir * np.random.uniform(low=0, high=random_head_camera_dis)
+                cam_pos = cam_pos + random_dir * self.camera_rng.uniform(low=0, high=random_head_camera_dis)
                 cam_forward = np.array(camera_info["forward"]) / np.linalg.norm(np.array(camera_info["forward"]))
                 cam_left = np.array(camera_info["left"]) / np.linalg.norm(np.array(camera_info["left"]))
                 up = np.cross(cam_forward, cam_left)

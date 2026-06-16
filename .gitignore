@@ -31,3 +31,5 @@ envs/curobo/*
 
 /*.json*
 /*.txt
+
+.tar.gz

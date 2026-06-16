@@ -57,7 +57,21 @@ class Base_Task(gym.Env):
         ta.setup_logging("CRITICAL")  # hide logging
         np.random.seed(kwags.get("seed", 0))
         torch.manual_seed(kwags.get("seed", 0))
-        # random.seed(kwags.get('seed', 0))
+        random.seed(kwags.get('seed', 0))
+
+        # Per-episode independent RNG channels, derived from the episode seed.
+        # Each perturbation type pulls from its own Generator so its RNG
+        # consumption never leaks into other channels or into the global RNG.
+        # Add a new perturbation -> grab one of the reserved slots and route it
+        # through self.<channel>_rng instead of np.random.*.
+        _ep_seed_seq = np.random.SeedSequence(kwags.get("seed", 0))
+        (_cam_ss, _light_ss, _bg_ss, _scene_ss, _inst_ss,
+         _reserved_a, _reserved_b, _reserved_c) = _ep_seed_seq.spawn(8)
+        self.camera_rng      = np.random.default_rng(_cam_ss)
+        self.light_rng       = np.random.default_rng(_light_ss)
+        self.background_rng  = np.random.default_rng(_bg_ss)
+        self.scene_rng       = np.random.default_rng(_scene_ss)
+        self.instruction_rng = np.random.default_rng(_inst_ss)
 
         self.FRAME_IDX = 0
         self.task_name = kwags.get("task_name")
@@ -410,6 +424,7 @@ class Base_Task(gym.Env):
         camera_kwags = dict(kwags)
         camera_kwags["camera_perturbation"] = self.camera_perturbation
         camera_kwags["camera_anchor"] = np.array(self.table.get_pose().p).tolist()
+        camera_kwags["camera_rng"] = self.camera_rng
 
         self.cameras = Camera(
             bias=self.table_z_bias,
