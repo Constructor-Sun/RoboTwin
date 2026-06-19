@@ -1,6 +1,7 @@
 assets/
 camera_preview/
 results/
+results_attn/
 models/
 perturbed_preview/
 data/*
@@ -32,4 +33,4 @@ envs/curobo/*
 /*.json*
 /*.txt
 
-.tar.gz
+*.tar.gz
