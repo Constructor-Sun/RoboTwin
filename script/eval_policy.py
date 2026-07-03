@@ -80,6 +80,78 @@ def print_camera_perturbation_config(args):
     print(" - Anchor Mode: " + str(camera_perturbation.get("anchor_mode", "table_center")))
 
 
+def print_sensor_noise_config(args):
+    sensor_noise = args.get("sensor_noise", {})
+    enabled = sensor_noise.get("enabled", False)
+    print("\033[96mSensor Noise:\033[0m " + str(enabled))
+    if not enabled:
+        return
+
+    print(" - Cycle By Episode: " + str(sensor_noise.get("cycle_by_episode", True)))
+    print(" - Severity Range: " + str(sensor_noise.get("severity_range", [2, 3])))
+    print(" - Types: " + str(sensor_noise.get("types", [
+        "motion_blur", "gaussian_blur", "zoom_blur", "fog", "glass_blur"
+    ])))
+    print(" - Cameras: " + str(sensor_noise.get("cameras", ["head_camera", "left_camera", "right_camera"])))
+
+
+def print_lighting_config(args):
+    lighting = args.get("lighting", {})
+    enabled = lighting.get("enabled", False)
+    print("\033[96mLighting:\033[0m " + str(enabled))
+    if not enabled:
+        return
+
+    print(" - L1 Diffuse Color: " + str(lighting.get("l1_diffuse_color", True)))
+    print(" - L1 RGB Range: " + str(lighting.get("l1_rgb_range", [0.0, 3.5])))
+    print(" - L2 Direction: " + str(lighting.get("l2_direction", True)))
+    print(" - L2 Theta Deg Range: " + str(lighting.get("l2_theta_deg_range", [8, 82])))
+    print(" - L2 Dramatic Side Prob: " + str(lighting.get("l2_dramatic_side_prob", 0.35)))
+    print(" - L3 Specular: " + str(lighting.get("l3_specular", True)))
+    print(" - L3 Prob: " + str(lighting.get("l3_prob", 0.5)))
+    print(" - L4 Shadows: " + str(lighting.get("l4_shadows", True)))
+    print(" - L4 Prob: " + str(lighting.get("l4_prob", 0.5)))
+
+
+def print_background_appearance_config(args):
+    background_appearance = args.get("background_appearance", {})
+    enabled = background_appearance.get("enabled", False)
+    print("\033[96mBackground Appearance:\033[0m " + str(enabled))
+    if not enabled:
+        return
+
+    print(" - B1 Scene Theme: " + str(background_appearance.get("b1_scene_theme", True)))
+    print(" - B1 Wall RGB Multiplier Range: " + str(
+        background_appearance.get("b1_wall_rgb_multiplier_range", [0.4, 1.8])
+    ))
+    print(" - B1 Floor Color Range: " + str(
+        background_appearance.get("b1_floor_color_range", [0.4, 1.8])
+    ))
+    print(" - B2 Surface Appearance: " + str(background_appearance.get("b2_surface_appearance", True)))
+    print(" - B2 Table Metallic Range: " + str(
+        background_appearance.get("b2_table_metallic_range", [0.0, 0.8])
+    ))
+    print(" - B2 Table Roughness Range: " + str(
+        background_appearance.get("b2_table_roughness_range", [0.05, 0.95])
+    ))
+    print(" - B2 Table Color Tint Range: " + str(
+        background_appearance.get("b2_table_color_tint_range", [0.4, 1.8])
+    ))
+
+
+def print_robot_init_state_config(args):
+    robot_init_state = args.get("robot_init_state", {})
+    enabled = robot_init_state.get("enabled", False)
+    print("\033[96mRobot Init State:\033[0m " + str(enabled))
+    if not enabled:
+        return
+
+    print(" - Joint Noise Std: " + str(robot_init_state.get("joint_noise_std", 0.1)))
+    print(" - Joint Noise Clip: " + str(robot_init_state.get("joint_noise_clip", 0.225)))
+    print(" - Gripper Extreme Prob: " + str(robot_init_state.get("gripper_extreme_prob", 0.25)))
+    print(" - Gripper Extreme Values: " + str(robot_init_state.get("gripper_extreme_values", [0.05, 0.95])))
+
+
 def main(usr_args):
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     task_name = usr_args["task_name"]
@@ -162,6 +234,10 @@ def main(usr_args):
     print("\033[95mRandom Table Height:\033[0m " + str(args["domain_randomization"]["random_table_height"]))
     print("\033[95mRandom Head Camera Distance:\033[0m " + str(args["domain_randomization"]["random_head_camera_dis"]))
     print_camera_perturbation_config(args)
+    print_sensor_noise_config(args)
+    print_lighting_config(args)
+    print_background_appearance_config(args)
+    print_robot_init_state_config(args)
 
     print("\033[94mHead Camera Config:\033[0m " + str(args["camera"]["head_camera_type"]) + f", " +
           str(args["camera"]["collect_head_camera"]))

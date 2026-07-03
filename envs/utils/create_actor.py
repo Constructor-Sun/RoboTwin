@@ -15,6 +15,18 @@ class UnStableError(Exception):
         super().__init__(msg)
 
 
+def _make_render_material(color=None, texture_path=None, metallic=0.1, roughness=0.3):
+    material = sapien.render.RenderMaterial()
+    if texture_path is not None:
+        texture2d = sapien.render.RenderTexture2D(texture_path)
+        material.set_base_color_texture(texture2d)
+    rgb = [1, 1, 1] if color is None else list(color[:3])
+    material.base_color = [*rgb, 1]
+    material.metallic = 0.1 if metallic is None else float(metallic)
+    material.roughness = 0.3 if roughness is None else float(roughness)
+    return material
+
+
 def preprocess(scene, pose: sapien.Pose) -> tuple[sapien.Scene, sapien.Pose]:
     """Add entity to scene. Add bias to z axis if scene is not sapien.Scene."""
     if isinstance(scene, sapien.Scene):
@@ -32,6 +44,9 @@ def create_entity_box(
     is_static=False,
     name="",
     texture_id=None,
+    color_tint=None,
+    metallic=None,
+    roughness=None,
 ) -> sapien.Entity:
     scene, pose = preprocess(scene, pose)
 
@@ -50,17 +65,21 @@ def create_entity_box(
 
         # test for both .png and .jpg
         texturepath = f"./assets/background_texture/{texture_id}.png"
-        # create texture from file
-        texture2d = sapien.render.RenderTexture2D(texturepath)
-        material = sapien.render.RenderMaterial()
-        material.set_base_color_texture(texture2d)
-        # renderer.create_texture_from_file(texturepath)
-        # material.set_diffuse_texture(texturepath)
-        material.base_color = [1, 1, 1, 1]
-        material.metallic = 0.1
-        material.roughness = 0.3
+        material = _make_render_material(
+            color=color_tint,
+            texture_path=texturepath,
+            metallic=metallic,
+            roughness=roughness,
+        )
     else:
-        material = sapien.render.RenderMaterial(base_color=[*color[:3], 1])
+        base_color = np.array(color[:3], dtype=np.float64)
+        if color_tint is not None:
+            base_color *= np.array(color_tint[:3], dtype=np.float64)
+        material = _make_render_material(
+            color=np.clip(base_color, 0, None).tolist(),
+            metallic=metallic,
+            roughness=roughness,
+        )
 
     # create render body for visualization
     render_component = sapien.render.RenderBodyComponent()
@@ -86,6 +105,9 @@ def create_box(
     name="",
     texture_id=None,
     boxtype="default",
+    color_tint=None,
+    metallic=None,
+    roughness=None,
 ) -> Actor:
     entity = create_entity_box(
         scene=scene,
@@ -95,6 +117,9 @@ def create_box(
         is_static=is_static,
         name=name,
         texture_id=texture_id,
+        color_tint=color_tint,
+        metallic=metallic,
+        roughness=roughness,
     )
     if boxtype == "default":
         data = {
@@ -332,6 +357,9 @@ def create_table(
         name="table",
         is_static=True,
         texture_id=None,
+        color_tint=None,
+        metallic=None,
+        roughness=None,
 ) -> sapien.Entity:
     """Create a table with specified dimensions."""
     scene, pose = preprocess(scene, pose)
@@ -356,21 +384,26 @@ def create_table(
 
         # test for both .png and .jpg
         texturepath = f"./assets/background_texture/{texture_id}.png"
-        # create texture from file
-        texture2d = sapien.render.RenderTexture2D(texturepath)
-        material = sapien.render.RenderMaterial()
-        material.set_base_color_texture(texture2d)
-        # renderer.create_texture_from_file(texturepath)
-        # material.set_diffuse_texture(texturepath)
-        material.base_color = [1, 1, 1, 1]
-        material.metallic = 0.1
-        material.roughness = 0.3
+        material = _make_render_material(
+            color=color_tint,
+            texture_path=texturepath,
+            metallic=metallic,
+            roughness=roughness,
+        )
         builder.add_box_visual(pose=tabletop_pose, half_size=tabletop_half_size, material=material)
     else:
+        base_color = np.array(color[:3], dtype=np.float64)
+        if color_tint is not None:
+            base_color *= np.array(color_tint[:3], dtype=np.float64)
+        material = _make_render_material(
+            color=np.clip(base_color, 0, None).tolist(),
+            metallic=metallic,
+            roughness=roughness,
+        )
         builder.add_box_visual(
             pose=tabletop_pose,
             half_size=tabletop_half_size,
-            material=color,
+            material=material,
         )
 
     # Table legs (x4)

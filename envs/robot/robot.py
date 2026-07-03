@@ -14,6 +14,7 @@ import envs._GLOBAL_CONFIGS as CONFIGS
 from envs.utils import transforms
 from .planner import CuroboPlanner
 import torch.multiprocessing as mp
+from envs.robot_init_state import sample_joint_noise
 
 
 class Robot:
@@ -231,12 +232,24 @@ class Robot:
                 damping=self.right_gripper_damping,
             )
 
-    def move_to_homestate(self):
+    def move_to_homestate(self, robot_init_state=None, rng=None):
+        robot_init_state = robot_init_state or {}
+        rng = rng if rng is not None else np.random.default_rng(0)
+
+        left_noise = sample_joint_noise(len(self.left_arm_joints), robot_init_state, rng)
+        right_noise = sample_joint_noise(len(self.right_arm_joints), robot_init_state, rng)
+
         for i, joint in enumerate(self.left_arm_joints):
-            joint.set_drive_target(self.left_homestate[i])
+            joint.set_drive_target(self.left_homestate[i] + left_noise[i])
 
         for i, joint in enumerate(self.right_arm_joints):
-            joint.set_drive_target(self.right_homestate[i])
+            joint.set_drive_target(self.right_homestate[i] + right_noise[i])
+
+        return {
+            "enabled": bool(robot_init_state.get("enabled", False)),
+            "left_joint_noise": left_noise.tolist(),
+            "right_joint_noise": right_noise.tolist(),
+        }
 
     def set_origin_endpose(self):
         self.left_original_pose = self.get_left_ee_pose()

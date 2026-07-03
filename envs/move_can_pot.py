@@ -48,6 +48,8 @@ class move_can_pot(Base_Task):
             convex=True,
             model_id=self.can_id,
         )
+        self.register_task_actor(self.pot, role="placement_target")
+        self.register_task_actor(self.can, role="manipulated_object")
         self.arm_tag = ArmTag("right" if self.can.get_pose().p[0] > 0 else "left")
         self.add_prohibit_area(self.pot, padding=0.03)
         self.add_prohibit_area(self.can, padding=0.1)
@@ -59,6 +61,18 @@ class move_can_pot(Base_Task):
         self.orig_z = self.pot.get_pose().p[2]
 
         # Get pot's current pose and calculate target pose for placing the can
+        pot_pose = self.pot.get_pose()
+        self.target_pose = sapien.Pose(
+            [
+                pot_pose.p[0] - 0.18 if self.arm_tag == "left" else pot_pose.p[0] + 0.18,
+                pot_pose.p[1],
+                0.741 + self.table_z_bias,
+            ],
+            pot_pose.q,
+        )
+
+    def on_objects_layout_updated(self):
+        self.arm_tag = ArmTag("right" if self.can.get_pose().p[0] > 0 else "left")
         pot_pose = self.pot.get_pose()
         self.target_pose = sapien.Pose(
             [

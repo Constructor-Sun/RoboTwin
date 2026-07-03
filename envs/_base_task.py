@@ -11,11 +11,21 @@ import json
 import transforms3d as t3d
 from collections import OrderedDict
 import torch, random
+import yaml
 
 from .utils import *
 import math
 from .robot import Robot
 from .camera import Camera
+from .background_appearance import (
+    add_ground_with_optional_material,
+    get_table_material_kwargs,
+    get_wall_material_kwargs,
+    sample_background_appearance,
+)
+from .lighting import apply_l3_specular, apply_lighting_to_light_specs, sample_lighting
+from .objects_layout import apply_target_pose_perturbation, sample_objects_layout
+from .robot_init_state import merge_robot_init_state_config, sample_gripper_extreme
 
 from copy import deepcopy
 import subprocess
@@ -66,12 +76,17 @@ class Base_Task(gym.Env):
         # through self.<channel>_rng instead of np.random.*.
         _ep_seed_seq = np.random.SeedSequence(kwags.get("seed", 0))
         (_cam_ss, _light_ss, _bg_ss, _scene_ss, _inst_ss,
-         _reserved_a, _reserved_b, _reserved_c) = _ep_seed_seq.spawn(8)
+         _sensor_noise_ss, _lighting_ss, _robot_init_ss, _bg_appearance_ss, _objects_layout_ss) = _ep_seed_seq.spawn(10)
         self.camera_rng      = np.random.default_rng(_cam_ss)
         self.light_rng       = np.random.default_rng(_light_ss)
         self.background_rng  = np.random.default_rng(_bg_ss)
         self.scene_rng       = np.random.default_rng(_scene_ss)
         self.instruction_rng = np.random.default_rng(_inst_ss)
+        self.sensor_noise_rng = np.random.default_rng(_sensor_noise_ss)
+        self.lighting_rng = np.random.default_rng(_lighting_ss)
+        self.robot_init_rng = np.random.default_rng(_robot_init_ss)
+        self.background_appearance_rng = np.random.default_rng(_bg_appearance_ss)
+        self.objects_layout_rng = np.random.default_rng(_objects_layout_ss)
 
         self.FRAME_IDX = 0
         self.task_name = kwags.get("task_name")
@@ -97,12 +112,28 @@ class Base_Task(gym.Env):
         self.crazy_random_light = (0 if not self.random_light else np.random.rand() < self.crazy_random_light_rate)
         self.random_embodiment = random_setting.get("random_embodiment", False)  # TODO
         self.camera_perturbation = kwags.get("camera_perturbation", {})
+        self.sensor_noise = kwags.get("sensor_noise", {})
+        self.robot_init_state = merge_robot_init_state_config(kwags.get("robot_init_state", {}))
+        self.background_appearance_config, self.background_appearance_summary = sample_background_appearance(
+            kwags.get("background_appearance", {}),
+            self.background_appearance_rng,
+        )
+        self.lighting_config, self.lighting_summary = sample_lighting(
+            kwags.get("lighting", {}),
+            self.lighting_rng,
+        )
+        self.objects_layout_config, self.objects_layout_summary = sample_objects_layout(
+            kwags.get("objects_layout", {}),
+            self.objects_layout_rng,
+        )
+        self.lighting_enabled = bool(self.lighting_summary.get("enabled", False))
+        self.robot_init_state_info = {"enabled": bool(self.robot_init_state.get("enabled", False))}
 
         self.file_path = []
         self.plan_success = True
         self.step_lim = None
         self.fix_gripper = False
-        self.setup_scene()
+        self.setup_scene(**kwags)
 
         self.left_js = None
         self.right_js = None
@@ -121,6 +152,7 @@ class Base_Task(gym.Env):
         self.cluttered_objs = list()
         self.prohibited_area = list()  # [x_min, y_min, x_max, y_max]
         self.record_cluttered_objects = list()  # record cluttered objects info
+        self.objects_layout_targets = []
 
         self.eval_success = False
         self.table_z_bias = (np.random.uniform(low=-self.random_table_height, high=0) + table_height_bias)  # TODO
@@ -135,18 +167,44 @@ class Base_Task(gym.Env):
         self.create_table_and_wall(table_xy_bias=table_xy_bias, table_height=0.74)
         self.load_robot(**kwags)
         self.load_camera(**kwags)
-        self.robot.move_to_homestate()
+        self.robot_init_state_info.update(
+            self.robot.move_to_homestate(
+                robot_init_state=self.robot_init_state,
+                rng=self.robot_init_rng,
+            )
+        )
 
         render_freq = self.render_freq
         self.render_freq = 0
         self.together_open_gripper(save_freq=None)
+        left_gripper_extreme = sample_gripper_extreme(self.robot_init_state, self.robot_init_rng)
+        right_gripper_extreme = sample_gripper_extreme(self.robot_init_state, self.robot_init_rng)
+        self.robot_init_state_info["left_gripper_extreme"] = left_gripper_extreme
+        self.robot_init_state_info["right_gripper_extreme"] = right_gripper_extreme
+        if left_gripper_extreme is not None:
+            self.robot.set_gripper(left_gripper_extreme, "left", gripper_eps=0)
+        if right_gripper_extreme is not None:
+            self.robot.set_gripper(right_gripper_extreme, "right", gripper_eps=0)
         self.render_freq = render_freq
 
         self.robot.set_origin_endpose()
         self.load_actors()
 
+        self.objects_layout_summary = apply_target_pose_perturbation(
+            self,
+            self.objects_layout_summary,
+            self.objects_layout_rng,
+        )
+        self.on_objects_layout_updated()
+
         if self.cluttered_table:
-            self.get_cluttered_table()
+            cluttered_numbers = self.objects_layout_summary.get("o1_distractor_count")
+            if cluttered_numbers is None:
+                self.get_cluttered_table()
+            else:
+                self.get_cluttered_table(cluttered_numbers=cluttered_numbers)
+
+        self.lighting_summary = apply_l3_specular(self.scene, self.lighting_summary)
 
         is_stable, unstable_list = self.check_stable()
         if not is_stable:
@@ -169,6 +227,10 @@ class Base_Task(gym.Env):
             "wall_texture": self.wall_texture,
             "table_texture": self.table_texture,
         }
+        self.info["background_appearance_info"] = self.background_appearance_summary
+        self.info["lighting_info"] = self.lighting_summary
+        self.info["robot_init_state_info"] = self.robot_init_state_info
+        self.info["objects_layout_info"] = self.objects_layout_summary
         self.info["info"] = {}
 
         self.stage_success_tag = False
@@ -212,6 +274,19 @@ class Base_Task(gym.Env):
     def check_success(self):
         pass
 
+    def register_task_actor(self, actor, role="task_object", pose_perturb=True):
+        self.objects_layout_targets.append(
+            {
+                "actor": actor,
+                "role": role,
+                "pose_perturb": bool(pose_perturb),
+            }
+        )
+        return actor
+
+    def on_objects_layout_updated(self):
+        pass
+
     def setup_scene(self, **kwargs):
         """
         Set the scene
@@ -239,7 +314,11 @@ class Base_Task(gym.Env):
         # set simulation timestep
         self.scene.set_timestep(kwargs.get("timestep", 1 / 250))
         # add ground to scene
-        self.scene.add_ground(kwargs.get("ground_height", 0))
+        add_ground_with_optional_material(
+            self.scene,
+            kwargs.get("ground_height", 0),
+            self.background_appearance_summary,
+        )
         # set default physical material
         self.scene.default_physical_material = self.scene.create_physical_material(
             kwargs.get("static_friction", 0.5),
@@ -250,23 +329,32 @@ class Base_Task(gym.Env):
         self.scene.set_ambient_light(kwargs.get("ambient_light", [0.5, 0.5, 0.5]))
         # default enable shadow unless specified otherwise
         shadow = kwargs.get("shadow", True)
+        direction_shadow = shadow
+        if self.lighting_enabled and self.lighting_summary.get("l4_shadow") is not None:
+            direction_shadow = self.lighting_summary["l4_shadow"]
         # default spotlight angle and intensity
         direction_lights = kwargs.get("direction_lights", [[[0, 0.5, -1], [0.5, 0.5, 0.5]]])
+        point_lights = kwargs.get("point_lights", [[[1, 0, 1.8], [1, 1, 1]], [[-1, 0, 1.8], [1, 1, 1]]])
+        if self.lighting_enabled:
+            direction_lights, point_lights = apply_lighting_to_light_specs(
+                direction_lights,
+                point_lights,
+                self.lighting_summary,
+            )
         self.direction_light_lst = []
         for direction_light in direction_lights:
-            if self.random_light:
+            if self.random_light and not self.lighting_enabled:
                 direction_light[1] = [
                     np.random.rand(),
                     np.random.rand(),
                     np.random.rand(),
                 ]
             self.direction_light_lst.append(
-                self.scene.add_directional_light(direction_light[0], direction_light[1], shadow=shadow))
+                self.scene.add_directional_light(direction_light[0], direction_light[1], shadow=direction_shadow))
         # default point lights position and intensity
-        point_lights = kwargs.get("point_lights", [[[1, 0, 1.8], [1, 1, 1]], [[-1, 0, 1.8], [1, 1, 1]]])
         self.point_light_lst = []
         for point_light in point_lights:
-            if self.random_light:
+            if self.random_light and not self.lighting_enabled:
                 point_light[1] = [np.random.rand(), np.random.rand(), np.random.rand()]
             self.point_light_lst.append(self.scene.add_point_light(point_light[0], point_light[1], shadow=shadow))
 
@@ -296,16 +384,16 @@ class Base_Task(gym.Env):
             file_count = len(
                 [name for name in os.listdir(directory_path) if os.path.isfile(os.path.join(directory_path, name))])
 
-            # wall_texture, table_texture = random.randint(0, file_count - 1), random.randint(0, file_count - 1)
-            wall_texture, table_texture = np.random.randint(0, file_count), np.random.randint(0, file_count)
+            wall_texture = self.background_rng.integers(0, file_count)
+            table_texture = self.background_rng.integers(0, file_count)
 
             self.wall_texture, self.table_texture = (
                 f"{texture_type}/{wall_texture}",
                 f"{texture_type}/{table_texture}",
             )
-            if np.random.rand() <= self.clean_background_rate:
+            if self.background_rng.random() <= self.clean_background_rate:
                 self.wall_texture = None
-            if np.random.rand() <= self.clean_background_rate:
+            if self.background_rng.random() <= self.clean_background_rate:
                 self.table_texture = None
         else:
             self.wall_texture, self.table_texture = None, None
@@ -318,6 +406,7 @@ class Base_Task(gym.Env):
             name="wall",
             texture_id=self.wall_texture,
             is_static=True,
+            **get_wall_material_kwargs(self.background_appearance_summary),
         )
 
         self.table = create_table(
@@ -329,6 +418,7 @@ class Base_Task(gym.Env):
             thickness=0.05,
             is_static=True,
             texture_id=self.table_texture,
+            **get_table_material_kwargs(self.background_appearance_summary),
         )
 
     def get_cluttered_table(self, cluttered_numbers=10, xlim=[-0.59, 0.59], ylim=[-0.34, 0.34], zlim=[0.741]):
@@ -425,6 +515,9 @@ class Base_Task(gym.Env):
         camera_kwags["camera_perturbation"] = self.camera_perturbation
         camera_kwags["camera_anchor"] = np.array(self.table.get_pose().p).tolist()
         camera_kwags["camera_rng"] = self.camera_rng
+        camera_kwags["sensor_noise"] = self.sensor_noise
+        camera_kwags["sensor_noise_rng"] = self.sensor_noise_rng
+        camera_kwags["episode_idx"] = self.ep_num
 
         self.cameras = Camera(
             bias=self.table_z_bias,
@@ -442,7 +535,7 @@ class Base_Task(gym.Env):
         Update rendering to refresh the camera's RGBD information
         (rendering must be updated even when disabled, otherwise data cannot be collected).
         """
-        if self.crazy_random_light:
+        if self.crazy_random_light and not self.lighting_enabled:
             for renderColor in self.point_light_lst:
                 renderColor.set_color([np.random.rand(), np.random.rand(), np.random.rand()])
             for renderColor in self.direction_light_lst:

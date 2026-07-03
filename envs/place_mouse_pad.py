@@ -81,9 +81,14 @@ class place_mouse_pad(Base_Task):
             name="box",
             is_static=True,
         )
+        self.register_task_actor(self.mouse, role="manipulated_object")
+        self.register_task_actor(self.target, role="placement_target")
         self.add_prohibit_area(self.target, padding=0.12)
         self.add_prohibit_area(self.mouse, padding=0.03)
         # Construct target pose with position from target object and identity orientation
+        self.target_pose = self.target.get_pose().p.tolist() + [0, 0, 0, 1]
+
+    def on_objects_layout_updated(self):
         self.target_pose = self.target.get_pose().p.tolist() + [0, 0, 0, 1]
 
     def play_once(self):

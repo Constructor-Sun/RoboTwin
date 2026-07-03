@@ -49,6 +49,8 @@ class place_container_plate(Base_Task):
             is_static=True,
             convex=True,
         )
+        self.register_task_actor(self.container, role="manipulated_object")
+        self.register_task_actor(self.plate, role="placement_target")
         self.add_prohibit_area(self.container, padding=0.1)
         self.add_prohibit_area(self.plate, padding=0.1)
 

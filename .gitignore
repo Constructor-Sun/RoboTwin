@@ -1,10 +1,9 @@
 assets/
-camera_preview/
+*_preview/
 results/
 results_attn/
 visualization_token_cas/
 models/
-perturbed_preview/
 data/*
 !data/process_stuck.py
 __pycache__/

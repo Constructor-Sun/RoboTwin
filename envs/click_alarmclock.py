@@ -36,7 +36,11 @@ class click_alarmclock(Base_Task):
             model_id=self.alarmclock_id,
             is_static=True,
         )
+        self.register_task_actor(self.alarm, role="interactive_target")
         self.add_prohibit_area(self.alarm, padding=0.05)
+        self.check_arm_function = self.is_left_gripper_close if self.alarm.get_pose().p[0] < 0 else self.is_right_gripper_close
+
+    def on_objects_layout_updated(self):
         self.check_arm_function = self.is_left_gripper_close if self.alarm.get_pose().p[0] < 0 else self.is_right_gripper_close
 
     def play_once(self):

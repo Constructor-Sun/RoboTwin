@@ -13,6 +13,7 @@ import math
 from .._GLOBAL_CONFIGS import CONFIGS_PATH
 import os
 from sapien.sensor import StereoDepthSensor, StereoDepthSensorConfig
+from .sensor_noise import SensorNoiseProcessor
 
 try:
     import pytorch3d.ops as torch3d_ops
@@ -58,6 +59,11 @@ class Camera:
         self.camera_anchor = np.array(kwags["camera_anchor"], dtype=np.float64) if self.camera_perturbation else None
         if self.camera_perturbation and self.camera_perturbation["enabled"] and self.camera_perturbation["c2_spherical"]:
             raise NotImplementedError("camera_perturbation.c2_spherical is configured but not implemented yet")
+        self.sensor_noise = SensorNoiseProcessor(
+            kwags.get("sensor_noise", {}),
+            episode_idx=kwags.get("episode_idx", 0),
+            rng=kwags.get("sensor_noise_rng", None),
+        )
 
         self.static_camera_config = []
         self.head_camera_type = kwags["camera"].get("head_camera_type", "D435")
@@ -430,7 +436,8 @@ class Camera:
         rgb = {}
         for camera_name, camera_data in rgba.items():
             rgb[camera_name] = {}
-            rgb[camera_name]["rgb"] = camera_data["rgba"][:, :, :3]  # Exclude alpha channel
+            image = camera_data["rgba"][:, :, :3]  # Exclude alpha channel
+            rgb[camera_name]["rgb"] = self.sensor_noise.apply(image, camera_name)
         return rgb
     
     # Get Camera RGBA

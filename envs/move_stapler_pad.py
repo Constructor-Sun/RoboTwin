@@ -77,10 +77,15 @@ class move_stapler_pad(Base_Task):
             color=self.color_value,
             name="box",
         )
+        self.register_task_actor(self.stapler, role="manipulated_object")
+        self.register_task_actor(self.pad, role="placement_target")
         self.add_prohibit_area(self.stapler, padding=0.1)
         self.add_prohibit_area(self.pad, padding=0.15)
 
         # Create target pose by combining target position with default quaternion orientation
+        self.pad_pose = self.pad.get_pose().p.tolist() + [0.707, 0, 0, 0.707]
+
+    def on_objects_layout_updated(self):
         self.pad_pose = self.pad.get_pose().p.tolist() + [0.707, 0, 0, 0.707]
 
     def play_once(self):

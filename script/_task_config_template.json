@@ -20,6 +20,24 @@
     "collect_head_camera": true,
     "collect_wrist_camera": true
   },
+  "background_appearance": {
+    "enabled": false,
+    "b1_scene_theme": true,
+    "b1_wall_rgb_multiplier_range": [0.4, 1.8],
+    "b1_floor_color_range": [0.4, 1.8],
+    "b2_surface_appearance": true,
+    "b2_table_metallic_range": [0.0, 0.8],
+    "b2_table_roughness_range": [0.05, 0.95],
+    "b2_table_color_tint_range": [0.4, 1.8]
+  },
+  "objects_layout": {
+    "enabled": false,
+    "o1_distractor_objects": true,
+    "o1_distractor_count_range": [3, 15],
+    "o2_target_pose": true,
+    "o2_xy_noise_std": 0.02,
+    "o2_yaw_deg": 15
+  },
   "data_type": {
     "rgb": true,
     "depth": false,
